@@ -74,7 +74,9 @@ def floor_manifest(floor):
 
 
 def main():
-    from build_glb import build_floors, write_glb
+    from build_glb import build_floors
+    from glb_templates import write_template_models
+    from palette_templates import make_templates
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="Directory for SCENE_BRIDGE_F1_ASSETS")
@@ -85,23 +87,27 @@ def main():
     default_index = next((index for index, floor in enumerate(floors) if floor["name"] == "F1"), 0)
     for index, floor in enumerate(floors):
         floor["elevation"] = (index - default_index) * FLOOR_SPACING
+    with ZipFile(THEME_ZIP) as archive:
+        theme = json.loads(archive.read(f"{THEME_ID}/{THEME_ID}.theme"))
+        templates = make_templates(theme, floors, sample["mapCenter"], lambda name: archive.read(f"{THEME_ID}/{name}"))
     manifest = {
         "mapId": sample["mapId"],
         "themeId": THEME_ID,
         "defaultFloorId": floors[default_index]["id"],
         "floorSpacing": FLOOR_SPACING,
         "origin": sample["mapCenter"],
-        "model": "building.glb",
+        "model": templates[0]["file"],
+        "templates": templates,
         "floors": [floor_manifest(floor) for floor in floors],
     }
 
     scene = build_floors(sample["mapId"], sample["mapCenter"], floors)
     prepare_map_assets(args.output)
-    size = write_glb(scene, args.output / manifest["model"])
+    write_template_models(scene, templates, args.output)
     (args.output / "sample.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     for floor in floors:
         print(f"{floor['name']}: {len(floor['features'])} meshes, Y={floor['elevation']} m")
-    print(f"Indoor GLB: {len(scene.geometry)} meshes, {size:,} bytes ({args.output.resolve()})")
+    print(f"{len(templates)} templates, {len(scene.geometry)} meshes per GLB ({args.output.resolve()})")
 
 
 if __name__ == "__main__":

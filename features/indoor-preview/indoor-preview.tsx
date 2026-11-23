@@ -16,15 +16,16 @@ const toggleClass = `${controlClass} aria-pressed:border-[#638677] aria-pressed:
 
 function PreviewWorkspace({ sample }: { sample: PreviewSample }) {
   const [selectedFloorId, setSelectedFloorId] = useState(sample.defaultFloorId);
+  const [template, setTemplate] = useState(sample.templates[0]);
   const [frame, setFrame] = useState<MapFrame | null>(null);
   const [anchorIndex, setAnchorIndex] = useState(0);
-  const [readyFloorId, setReadyFloorId] = useState<number | null>(null);
+  const [readyKey, setReadyKey] = useState("");
   const controllerRef = useRef<MapControls | null>(null);
   const dispatch = useCallback((command: ViewCommand) => controllerRef.current?.dispatch(command), []);
 
   const floor = sample.floors.find(({ id }) => id === (frame?.floorId ?? sample.defaultFloorId))!;
   const switching = !!frame && selectedFloorId !== frame.floorId;
-  const canControl = !!frame && !switching && readyFloorId === frame.floorId;
+  const canControl = !!frame && !switching && readyKey === `${frame.floorId}/${template.id}`;
 
   function selectFloor(id: number) {
     if (controllerRef.current?.selectFloor(id)) {
@@ -62,6 +63,22 @@ function PreviewWorkspace({ sample }: { sample: PreviewSample }) {
         </div>
       </div>
 
+      <div role="group" aria-label="整栋配色模板" className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[13px] font-semibold">配色模板</span>
+        {sample.templates.map((option) => (
+          <Button key={option.id} type="button" variant="outline" size="sm"
+            className={toggleClass} aria-pressed={template.id === option.id} onClick={() => setTemplate(option)}>
+            <span className="flex -space-x-0.5" aria-hidden="true">
+              {option.swatches.map((swatch, index) => (
+                <span key={index} className="size-2.5 rounded-full border border-white shadow-[0_0_0_1px_#60797045]"
+                  style={{ backgroundColor: swatch }} />
+              ))}
+            </span>
+            {option.label}
+          </Button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-2 gap-3 max-[800px]:grid-cols-1">
         <section className={panelClass} aria-labelledby="fengmap-title">
           <div className={panelHeaderClass}>
@@ -75,11 +92,11 @@ function PreviewWorkspace({ sample }: { sample: PreviewSample }) {
         <section className={panelClass} aria-labelledby="model-title">
           <div className={panelHeaderClass}>
             <h2 className="font-semibold" id="model-title">R3F 模型</h2>
-            <span className={mutedClass}>整栋 GLB · {floor.name}</span>
+            <span className={mutedClass}>{template.label} · {floor.name}</span>
           </div>
           {/* R3F Model Viewport */}
-          <ModelViewport sample={sample} floor={floor} frame={frame} anchorIndex={anchorIndex}
-            readyFloorId={readyFloorId} onReady={setReadyFloorId} dispatch={dispatch} />
+          <ModelViewport sample={sample} floor={floor} template={template} frame={frame} anchorIndex={anchorIndex}
+            readyKey={readyKey} onReady={setReadyKey} dispatch={dispatch} />
         </section>
       </div>
 
@@ -111,6 +128,7 @@ export function IndoorPreview() {
         if (!response.ok) throw new Error("预览资源未就绪，请按方案准备本机样本");
         const data: PreviewSample = await response.json();
         if (!data.floors?.length) throw new Error("请按方案重新生成整栋预览资源");
+        if (!data.templates?.length) throw new Error("请按方案重新生成整栋配色资源");
         setSample(data);
       })
       .catch((error: Error) => {
