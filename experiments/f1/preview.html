@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SceneBridge · F1 数据验证</title>
+<link rel="icon" href="data:,">
+<style>
+  body { margin: 0; height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); font: 16px system-ui; }
+  header { padding: 12px 20px; background: #182635; color: white; }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  #map { position: relative; overflow: hidden; }
+</style>
+<header>
+  <h1>SceneBridge · F1 数据验证</h1>
+  <div id="status" role="status">正在加载本地地图和主题</div>
+</header>
+<main id="map" aria-label="FengMap F1 原图"></main>
+<script src="./sdk/JavaScript_SDK_v3.2.0_Lib(Es5)/fengmap.map.min.js"></script>
+<script type="module">
+  const status = document.querySelector("#status");
+
+  function sameRing(source, sdkRing) {
+    const expected = source.slice(0, -1);
+    const close = ([x, y], point) =>
+      Math.abs(x - point.x) < 0.001 && Math.abs(y - point.y) < 0.001;
+    const first = sdkRing[0];
+    const last = sdkRing.at(-1);
+    const points = close([first.x, first.y], last) ? sdkRing.slice(0, -1) : sdkRing;
+    if (points.length !== expected.length) return false;
+    // The SDK can reverse the winding or start the ring at another vertex.
+    const start = points.findIndex((point) => close(expected[0], point));
+    return start >= 0 && [1, -1].some((direction) => expected.every((point, i) =>
+      close(point, points[(start + direction * i + points.length) % points.length])));
+  }
+
+  function verifyFloor(map, sample) {
+    const floor = map.getFloor(sample.floorId);
+    const layers = {
+      extent: floor.getLayers(fengmap.FMType.EXTENT_LAYER)[0].getFeatures(),
+      model: floor.getLayers(fengmap.FMType.MODEL_LAYER)[0].getFeatures(),
+    };
+    const extent = sample.features.find((feature) => feature.holes.length > 0);
+    const sdkExtent = layers.extent.find((feature) => feature.ID === extent.id);
+    const expectedRings = [extent.outer, ...extent.holes];
+    const ringsMatch = sdkExtent.coordinates.length === expectedRings.length &&
+      expectedRings.every((ring, index) => sameRing(ring, sdkExtent.coordinates[index]));
+
+    const landmarks = sample.features.filter((feature) =>
+      feature.kind === "model" && [58, 134, 172].includes(feature.id));
+    const landmarkIds = landmarks.map((feature) => {
+      const sdkFeature = layers.model.find((candidate) => candidate.ID === feature.id);
+      const [x, y] = feature.outer[0];
+      const point = sdkFeature.coordinates[0][0];
+      const data = sdkFeature.getData();
+      if (data.FID !== feature.fid || String(data.typeID) !== String(feature.typeId) ||
+          Math.abs(data.height - feature.sourceHeight) >= 0.001 ||
+          Math.abs(data.baseHeight - feature.sourceBaseHeight) >= 0.001 ||
+          Math.abs(x - point.x) >= 0.001 || Math.abs(y - point.y) >= 0.001) {
+        throw new Error(`面要素 ${feature.id} 与源分片不一致`);
+      }
+      return feature.id;
+    });
+
+    const countsMatch = Object.entries(layers).every(([kind, features]) =>
+      features.length === sample.features.filter((feature) => feature.kind === kind).length);
+    if (!ringsMatch || landmarkIds.length !== 3 || !countsMatch) {
+      throw new Error(`对照未通过 · 楼面 ${layers.extent.length} · 模型面 ${layers.model.length} · 楼面内外环${ringsMatch ? "一致" : "不一致"} · 地标 ${landmarkIds.length}`);
+    }
+    return `${layers.extent.length} 个楼面 · ${layers.model.length} 个模型面 · ${extent.holes.length} 个孔洞 · 已核对 3 个地标`;
+  }
+
+  try {
+    const [config, sample] = await Promise.all([
+      fetch("./config.json").then((response) => response.json()),
+      fetch("./f1.json").then((response) => response.json()),
+    ]);
+    const map = new fengmap.FMMap({
+      ...config,
+      container: document.querySelector("#map"),
+      mapID: sample.mapId,
+      mapURL: "./map/",
+      themeURL: "./theme/",
+      level: sample.floorId,
+      visibleLevels: [sample.floorId],
+      viewMode: fengmap.FMViewMode.MODE_2D,
+      rotation: 0,
+    });
+    map.on("info", (event) => {
+      const mode = Object.keys(fengmap.FMInfoMode).find((name) =>
+        fengmap.FMInfoMode[name] === event.InfoMode);
+      status.textContent = `SDK 状态 ${mode ?? event.InfoMode ?? event.type}`;
+    });
+    map.on("loaded", () => {
+      try {
+        status.textContent = `F1 已加载 · ${verifyFloor(map, sample)}`;
+      } catch (error) {
+        status.textContent = `F1 已加载 · ${error.message}`;
+      }
+    });
+  } catch (error) {
+    status.textContent = `加载失败 · ${error.message}`;
+  }
+</script>
+</html>

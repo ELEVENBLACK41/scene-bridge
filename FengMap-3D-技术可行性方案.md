@@ -45,10 +45,70 @@
 
 第一步优先确认真实轮廓和孔洞的来源。室内样本 ZIP 有六层的 `.geo.fmap` 分片、主 `.fmap` 和 `.scene.fmap`，主题资源另行提供。SDK 文档列出了 `FMModel.getData()` 的 ID、类别和高度属性，返回字段清单未列出外环和内环。如果现有 Python 小样用的是手工轮廓，先查公司现有的地图导出能力或格式说明，再确定真实数据的读取方式。[FengMap 模型数据 API](https://developer.fengmap.com/docs/js/v3.2.0/fengmap.FMModel.html#getData)
 
+### 第一步验证记录
+
+Python 已通过室内样本验证。`.scene.fmap` 中 F1 的内部楼层 ID 为 `3`。`.floor.F1.geo.fmap` 保存楼面的外环、内环及各面要素的坐标和高度。`.floor.F1.biz.fmap` 提供模型的 `FID`、类别和名称。几何与业务分片按同楼层、同图层下的元素 ID 关联。
+
+| 核对项 | 室内样本结果 |
+| --- | --- |
+| 楼面和模型 | 读取到 36 个楼面和 2,760 个模型面，外环均闭合。楼面 `ID=1` 的外环有 139 个顶点，内环有 8 个顶点，均不计重复闭合点。内环顶点都在外环内，两环绕向相反。 |
+| 可识别面要素 | 模型 `ID=58` 为贵宾室 N1-3，`ID=134` 为会议室 N101，`ID=172` 为男洗手间。三者均取得源 `FID`、类别、轮廓和顶底高度。 |
+| 缺失项 | 楼面记录没有类别、`FID` 或底面高度，读取时保留为空。要素高度来自地图数据，楼层的实际建筑标高仍待确认。 |
+| 主题归属 | 室内外一体化主题将内嵌建筑 `2067174468621234177` 指向主题 `2067158499815383041`。内嵌建筑的 `.scene.fmap`、F1 几何和业务分片与单独室内 ZIP 对应文件逐字节相同。 |
+| SDK 加载 | 使用用户提供的 Web 授权，Edge 通过本机 HTTP 加载 SDK v3.2.0、场景、F1 分片和室内主题并显示 F1。SDK 与 Python 的楼面和模型数量一致。对齐起点和遍历方向后，楼面 `ID=1` 的外环和内环逐点一致。三个地标的 `FID`、类别、首个轮廓点和顶底高度一致。 |
+
+在仓库根目录执行以下命令可以重复提取样本。预览前在本机配置 `FENGMAP_APP_NAME` 和 `FENGMAP_KEY`，准备官方 v3.2.0 SDK Lib ZIP，再打开启动命令打印的地址。[FengMap SDK 下载](https://developer.fengmap.com/develop-jsv3-download.html) · [FengMap 本机白名单配置](https://developer.fengmap.com/faq/help-faq-detail12-25.html)
+
+```powershell
+python -B experiments/f1/read_sample.py 'fengMap/单独室内/2067155016009707521.zip' (Join-Path $env:TEMP 'scenebridge-f1/f1.json')
+python -B experiments/f1/serve_preview.py '<SDK Lib ZIP 的本机路径>'
+```
+
+### 第二步验证记录
+
+用第一步提取的 F1 JSON 生成 `F1.glb`，文件约 3.17 MiB，包含 `F1` 分组、36 个楼面网格和 2,760 个模型网格。每个网格保留源元素 ID，源数据提供的 `FID`、类别、名称和高度也写入 GLB 节点属性。
+
+| 核对项 | F1 GLB 结果 |
+| --- | --- |
+| 坐标 | 使用室内地图的场景中心 `(12970972, 4833953)` 作为整栋共用的平面原点。保留源平面投影坐标的米制单位，GLB 的 `+X` 向东、`+Y` 向上、`+Z` 向南。 |
+| 高度 | F1 地面为 `Y=0`。模型按几何分片的顶底高度挤出。采用 FengMap 的楼面定位方式，源数据的 `0.2 m` 楼板厚度从地面向下挤出。F1 的建筑实测标高仍待确认。 |
+| 文件重开 | Trimesh 从磁盘重读，确认 2,796 个网格均在 `F1` 分组下，所有网格闭合且顶底高度符合源数据和楼面定位。浏览器使用 Three.js `GLTFLoader` 成功加载并显示同一文件，可通过源 ID 找到三个地标。 |
+| 孔洞 | 从重开的楼面 `ID=1` 顶面三角形重建平面，确认仍有一个内环。浏览器对整层从孔洞内部垂直向下发射射线，未命中网格。相邻楼板上的对照射线正常命中。 |
+
+生成命令依赖第一步的 `f1.json`。以下命令在临时目录创建 Python 虚拟环境并导出 F1。
+
+```powershell
+$stageDir = Join-Path $env:TEMP 'scenebridge-f1'
+python -m venv (Join-Path $stageDir 'venv')
+$python = Join-Path $stageDir 'venv/Scripts/python.exe'
+& $python -m pip install -r experiments/f1/requirements.txt
+& $python -B experiments/f1/build_glb.py (Join-Path $stageDir 'f1.json') (Join-Path $stageDir 'F1.glb')
+```
+
+### 第三步验证记录
+
+Next.js 独立路由 `/preview/f1` 已接入本地 F1 样本。左栏用 FengMap SDK v3.2.0 显示室内原图并固定为北向俯视。右栏用 R3F 加载第二步生成的 GLB，取得左栏的取景中心和每米像素数后使用同样的正交取景。
+
+- 在 1440 × 920 的 Edge 视口中，两栏整层轮廓朝向一致。切换楼板孔洞、贵宾室 N1-3、会议室 N101 和男洗手间，标记在两栏各自画布中的坐标最大相差约 0.5 个 CSS 像素。
+- 右栏可以拖动旋转、滚轮或按钮缩放。重置使右栏回到初始北向俯视，并恢复与左栏相同的取景比例和中心。
+- 页面用 Tailwind CSS 布局，按钮沿用 shadcn/ui 的 Radix 组件。F1 地面作为模型高度基准，页面标明建筑实测标高待确认。
+
+Next.js 直接加载项目内的 `public/vendor/fengmap/3.2.0/fengmap.map.min.js`，同目录包含官方 Lib 包里的 Draco 解码文件。[FengMap SDK 下载](https://developer.fengmap.com/develop-jsv3-download.html)
+
+在第二步使用的 Python 环境中准备预览资源。
+
+```powershell
+$stageDir = Join-Path $env:TEMP 'scenebridge-f1'
+$python = Join-Path $stageDir 'venv/Scripts/python.exe'
+& $python -B experiments/f1/prepare_preview.py (Join-Path $stageDir 'F1.glb') '.scene-bridge/f1'
+```
+
+在项目根目录的 `.env.local` 中填写 `SCENE_BRIDGE_F1_ASSETS=.scene-bridge/f1`，并配置 `FENGMAP_APP_NAME` 和 `FENGMAP_KEY`。运行 `npm run dev` 后打开 [F1 双栏预览](http://localhost:3000/preview/f1)。
+
 ## 验收条件
 
 - 选择样本后，页面同时出现左侧 FengMap 原图和右侧 R3F 模型。以 F1 的外轮廓、一个孔洞和几个可识别的面要素为对照，核对方向、位置和高度。切换楼层，两边都显示对应楼层。
 - 在 F1 选择“分类对比色”，切到 B2 和 F4，核对相同类别的模型元素都使用模板指定的材质颜色。两套模板对应的几何、楼层和元素 ID 一致。
 - 只预览 F1 时点击“导出整栋 GLB”。重新用 R3F 打开下载文件，应能找到 B2、B1、F1、F2、F3、F4 六个楼层分组，并逐层核对所选配色。其他输入地图按各自的源楼层清单验收。
 
-**当前进度**为方案阶段，Python 转换已做过带孔轮廓的小样验证。完整室内模型、双栏联动和配色导出是下一次实施要验证的内容。
+**当前进度**为前三步已验收。Next.js 已完成固定样本的 F1 双栏对照。下一步扩展到整栋 GLB 和双栏楼层联动。

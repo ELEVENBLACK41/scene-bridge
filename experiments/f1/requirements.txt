@@ -1,0 +1,4 @@
+numpy==2.5.5
+Shapely==2.2.0
+mapbox-earcut==2.1.0
+trimesh==5.2.2
