@@ -1,12 +1,11 @@
-"""Prepare the local map and GLB assets for the Next.js F1 preview."""
+"""Build the indoor GLB and prepare local assets for the Next.js preview."""
 
 import argparse
 import json
-import shutil
 from pathlib import Path
 from zipfile import ZipFile
 
-from read_sample import read_f1
+from read_sample import read_building
 
 
 MAP_ID = "2067155016009707521"
@@ -14,6 +13,7 @@ THEME_ID = "2067158499815383041"
 RESOURCES = Path(__file__).resolve().parents[2] / "fengMap"
 MAP_ZIP = RESOURCES / "单独室内" / f"{MAP_ID}.zip"
 THEME_ZIP = RESOURCES / "室内外一体化主题" / "2067162143855890434.zip"
+FLOOR_SPACING = 4
 
 
 def prepare_map_assets(root):
@@ -24,53 +24,84 @@ def prepare_map_assets(root):
         archive.extractall(root / "theme", members=indoor_files)
 
 
-def write_manifest(root, sample):
+def floor_manifest(floor):
     from shapely.geometry import Polygon
 
-    features = {(feature["kind"], feature["id"]): feature for feature in sample["features"]}
+    features = floor["features"]
+    with_hole = next(
+        (feature for feature in features if feature["kind"] == "extent" and feature["holes"]),
+        None,
+    )
+    models = [feature for feature in features if feature["kind"] == "model"]
+    if with_hole is None:
+        with_hole = next((feature for feature in models if feature["holes"]), None)
+    checkpoints = []
+    if with_hole:
+        label = "楼板孔洞" if with_hole["kind"] == "extent" else "模型孔洞"
+        checkpoints.append((with_hole, label, True))
+    if floor["name"] == "F1":
+        names = {58: "贵宾室 N1-3", 134: "会议室 N101", 172: "男洗手间"}
+        checkpoints += [(feature, names[feature["id"]], False) for feature in models if feature["id"] in names]
+    else:
+        unique_names = set()
+        for feature in models:
+            label = feature["name"]
+            if label and label not in unique_names:
+                unique_names.add(label)
+                checkpoints.append((feature, label.replace("%rn%", " "), False))
+            if len(unique_names) == 2:
+                break
+
     anchors = []
-    for kind, element_id, label in (
-        ("extent", 1, "楼板孔洞"),
-        ("model", 58, "贵宾室 N1-3"),
-        ("model", 134, "会议室 N101"),
-        ("model", 172, "男洗手间"),
-    ):
-        feature = features[kind, element_id]
-        ring = feature["holes"][0] if kind == "extent" else feature["outer"]
+    for feature, label, is_hole in checkpoints:
+        kind = feature["kind"]
+        ring = feature["holes"][0] if is_hole else feature["outer"]
         point = Polygon(ring).representative_point()
         anchors.append({
             "kind": kind,
-            "sourceId": element_id,
+            "sourceId": feature["id"],
             "label": label,
             "point": [point.x, point.y],
             "height": 0 if kind == "extent" else feature["sourceHeight"],
         })
 
-    xs, ys = zip(*(point for feature in sample["features"] for point in feature["outer"]))
-    manifest = {
-        "mapId": sample["mapId"],
-        "themeId": THEME_ID,
-        "floorId": sample["floorId"],
-        "origin": sample["mapCenter"],
-        "bounds": [min(xs), min(ys), max(xs), max(ys)],
+    return {
+        "id": floor["id"],
+        "name": floor["name"],
+        "elevation": floor["elevation"],
         "anchors": anchors,
     }
-    (root / "sample.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
 
 def main():
+    from build_glb import build_floors, write_glb
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("glb", type=Path, help="F1 GLB from build_glb.py")
     parser.add_argument("output", type=Path, help="Directory for SCENE_BRIDGE_F1_ASSETS")
     args = parser.parse_args()
 
-    if not args.glb.is_file():
-        parser.error(f"F1 GLB not found: {args.glb}")
-    sample = read_f1(MAP_ZIP)
+    sample = read_building(MAP_ZIP)
+    floors = sample["floors"]
+    default_index = next((index for index, floor in enumerate(floors) if floor["name"] == "F1"), 0)
+    for index, floor in enumerate(floors):
+        floor["elevation"] = (index - default_index) * FLOOR_SPACING
+    manifest = {
+        "mapId": sample["mapId"],
+        "themeId": THEME_ID,
+        "defaultFloorId": floors[default_index]["id"],
+        "floorSpacing": FLOOR_SPACING,
+        "origin": sample["mapCenter"],
+        "model": "building.glb",
+        "floors": [floor_manifest(floor) for floor in floors],
+    }
+
+    scene = build_floors(sample["mapId"], sample["mapCenter"], floors)
     prepare_map_assets(args.output)
-    shutil.copyfile(args.glb, args.output / "F1.glb")
-    write_manifest(args.output, sample)
-    print(f"F1 preview assets: {args.output.resolve()}")
+    size = write_glb(scene, args.output / manifest["model"])
+    (args.output / "sample.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    for floor in floors:
+        print(f"{floor['name']}: {len(floor['features'])} meshes, Y={floor['elevation']} m")
+    print(f"Indoor GLB: {len(scene.geometry)} meshes, {size:,} bytes ({args.output.resolve()})")
 
 
 if __name__ == "__main__":

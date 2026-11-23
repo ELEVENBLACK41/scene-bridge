@@ -1,25 +1,49 @@
-"""Build a Y-up GLB from the extracted F1 geometry JSON."""
+"""Build a Y-up GLB from the extracted indoor geometry."""
 
 import argparse
 import json
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import numpy as np
 import trimesh
+from shapely import make_valid
 from shapely.geometry import Polygon
 
 
-def build_scene(sample):
-    origin = np.asarray(sample["mapCenter"], dtype=np.float64)
-    floor = sample["floor"]
-    scene = trimesh.Scene()
-    scene.graph.update(frame_to=floor, metadata={
-        "mapId": sample["mapId"],
-        "floorId": sample["floorId"],
-        "mapOriginXY": origin.tolist(),
-        "verticalDatum": "floor-relative",
-    })
+def extrude_footprint(polygon, height, transform, name):
+    repaired = not polygon.is_valid
+    if repaired:
+        polygon = make_valid(polygon)
+    if polygon.geom_type != "Polygon" or polygon.area <= 0:
+        raise ValueError(f"{name} has an invalid footprint")
 
+    mesh = trimesh.creation.extrude_polygon(polygon, height, engine="earcut", transform=transform)
+    if mesh.is_watertight:
+        return mesh, repaired
+
+    # Resolve coincident edges at touching rings before the second triangulation.
+    tolerance = 0.0001
+    polygon = polygon.buffer(-tolerance, join_style="mitre").buffer(tolerance, join_style="mitre")
+    if polygon.geom_type != "Polygon" or polygon.area <= 0:
+        raise ValueError(f"{name} footprint could not be repaired")
+    mesh = trimesh.creation.extrude_polygon(polygon, height, engine="earcut", transform=transform)
+    if not mesh.is_watertight:
+        raise ValueError(f"{name} extrusion is not watertight")
+    return mesh, True
+
+
+def build_scene(sample):
+    floor = {
+        "name": sample["floor"], "id": sample["floorId"],
+        "elevation": 0, "features": sample["features"],
+    }
+    return build_floors(sample["mapId"], sample["mapCenter"], [floor])
+
+
+def build_floors(map_id, map_center, floors):
+    origin = np.asarray(map_center, dtype=np.float64)
+    scene = trimesh.Scene()
     materials = {
         "extent": trimesh.visual.material.PBRMaterial(
             name="Floor", baseColorFactor=[175, 186, 199, 255],
@@ -30,17 +54,28 @@ def build_scene(sample):
             metallicFactor=0.0, roughnessFactor=0.8,
         ),
     }
+    datum = "floor-relative" if len(floors) == 1 else "illustrative"
+    for floor in floors:
+        scene.graph.update(
+            frame_to=floor["name"],
+            translation=[0, floor["elevation"], 0],
+            metadata={
+                "mapId": map_id, "floorId": floor["id"], "mapOriginXY": origin.tolist(),
+                "verticalDatum": datum,
+            },
+        )
+        add_floor_geometry(scene, floor, origin, materials)
+    return scene
 
-    for feature in sample["features"]:
+
+def add_floor_geometry(scene, floor, origin, materials):
+    for feature in floor["features"]:
         kind = feature["kind"]
-        name = f"{floor}_{kind}_{feature['id']}"
+        name = f"{floor['name']}_{kind}_{feature['id']}"
         polygon = Polygon(
             np.asarray(feature["outer"]) - origin,
             [np.asarray(ring) - origin for ring in feature["holes"]],
         )
-        if not polygon.is_valid or polygon.area <= 0:
-            raise ValueError(f"{name} has an invalid footprint")
-
         top = feature["sourceHeight"]
         base = feature["sourceBaseHeight"]
         if kind == "extent":
@@ -54,12 +89,10 @@ def build_scene(sample):
             [0, -1, 0, 0],
             [0, 0, 0, 1],
         ])
-        mesh = trimesh.creation.extrude_polygon(
-            polygon, top - base, engine="earcut", transform=transform,
-        )
+        mesh, repaired = extrude_footprint(polygon, top - base, transform, name)
         mesh.visual = trimesh.visual.TextureVisuals(material=materials[kind])
         scene.add_geometry(
-            mesh, node_name=name, geom_name=name, parent_node_name=floor,
+            mesh, node_name=name, geom_name=name, parent_node_name=floor["name"],
             metadata={
                 "kind": kind,
                 "sourceId": feature["id"],
@@ -68,9 +101,22 @@ def build_scene(sample):
                 "sourceName": feature["name"],
                 "sourceHeight": feature["sourceHeight"],
                 "sourceBaseHeight": feature["sourceBaseHeight"],
+                **({"footprintRepaired": True} if repaired else {}),
             },
         )
-    return scene
+
+
+def write_glb(scene, output):
+    glb = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=output.parent, delete=False) as temporary:
+        temporary.write(glb)
+    temporary_path = Path(temporary.name)
+    try:
+        temporary_path.replace(output)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return len(glb)
 
 
 def main():
@@ -81,10 +127,8 @@ def main():
 
     sample = json.loads(args.geometry_json.read_text(encoding="utf-8"))
     scene = build_scene(sample)
-    glb = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(glb)
-    print(f"{sample['floor']}: {len(scene.geometry)} meshes, {len(glb):,} bytes")
+    size = write_glb(scene, args.output)
+    print(f"{sample['floor']}: {len(scene.geometry)} meshes, {size:,} bytes")
 
 
 if __name__ == "__main__":

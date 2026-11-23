@@ -54,7 +54,7 @@ def read_rings(geometry):
         for ring_index, end in enumerate(read_fields(group)[1]):
             span = coordinates[start:end]
             if end > len(coordinates) or len(span) < 6:
-                raise ValueError("Invalid F1 ring offset")
+                raise ValueError("Invalid polygon ring offset")
             ring = list(zip(span[::2], span[1::2], strict=True))
             if ring_index == 0:
                 outer.extend(ring)
@@ -62,7 +62,7 @@ def read_rings(geometry):
                 holes.append(ring)
             start = end
     if not outer or start != len(coordinates):
-        raise ValueError("Incomplete F1 polygon coordinates")
+        raise ValueError("Incomplete polygon coordinates")
     return outer, holes
 
 
@@ -92,29 +92,55 @@ def read_layer(kind, geometry_records, business_records):
     return features
 
 
+def read_scene(archive, map_id):
+    scene = read_fields(archive.read(f"{map_id}.scene.fmap"))
+    floors = [read_fields(record) for record in scene[18]]
+    floor_ids = {floor[2][0].decode("utf-8"): floor[1][0] for floor in floors}
+    return [scene[1][0], scene[2][0]], floor_ids
+
+
+def read_floor(archive, map_id, name, floor_id):
+    prefix = f"{map_id}.floor.{name}"
+    try:
+        geometry = read_fields(archive.read(f"{prefix}.geo.fmap"))
+        business = read_fields(archive.read(f"{prefix}.biz.fmap"))
+    except KeyError as error:
+        raise ValueError(f"{name} is missing a geometry or business shard") from error
+
+    for shard in (geometry, business):
+        if shard[1][0].decode("utf-8") != map_id or shard[2][0] != floor_id:
+            raise ValueError(f"{name} shard does not match the sample scene")
+    extents = read_layer("extent", geometry[4], business[3])
+    models = read_layer("model", geometry[5], business[4])
+    if not extents:
+        raise ValueError(f"{name} has no floor geometry")
+    return extents + models
+
+
+def read_building(archive_path):
+    map_id = archive_path.stem
+    with ZipFile(archive_path) as archive:
+        center, floor_ids = read_scene(archive, map_id)
+        floors = [
+            {"name": name, "id": floor_id, "features": read_floor(archive, map_id, name, floor_id)}
+            for name, floor_id in sorted(floor_ids.items(), key=lambda floor: floor[1])
+        ]
+    return {"mapId": map_id, "mapCenter": center, "floors": floors}
+
+
 def read_f1(archive_path):
     map_id = archive_path.stem
     with ZipFile(archive_path) as archive:
-        scene = read_fields(archive.read(f"{map_id}.scene.fmap"))
-        geometry = read_fields(archive.read(f"{map_id}.floor.F1.geo.fmap"))
-        business = read_fields(archive.read(f"{map_id}.floor.F1.biz.fmap"))
-
-    floors = [read_fields(record) for record in scene[18]]
-    floor_ids = {floor[2][0].decode("utf-8"): floor[1][0] for floor in floors}
-    floor_id = floor_ids["F1"]
-    for shard in (geometry, business):
-        if shard[1][0].decode("utf-8") != map_id or shard[2][0] != floor_id:
-            raise ValueError("F1 shard does not match the sample scene")
-
-    extents = read_layer("extent", geometry[4], business[3])
-    models = read_layer("model", geometry[5], business[4])
+        center, floor_ids = read_scene(archive, map_id)
+        floor_id = floor_ids["F1"]
+        features = read_floor(archive, map_id, "F1", floor_id)
     return {
         "mapId": map_id,
         "floor": "F1",
         "floorId": floor_id,
         "floorIds": floor_ids,
-        "mapCenter": [scene[1][0], scene[2][0]],
-        "features": extents + models,
+        "mapCenter": center,
+        "features": features,
     }
 
 

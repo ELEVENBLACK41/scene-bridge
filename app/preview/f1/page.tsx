@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { F1Preview } from "./f1-preview";
+import { IndoorPreview } from "@/features/indoor-preview/indoor-preview";
 
 export const metadata: Metadata = {
-  title: "F1 双栏预览 | SceneBridge",
+  title: "室内地图双栏预览 | SceneBridge",
 };
 
-export default function F1PreviewPage() {
-  return <F1Preview />;
+export default function PreviewPage() {
+  return <IndoorPreview />;
 }
