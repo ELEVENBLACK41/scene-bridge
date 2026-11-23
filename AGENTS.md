@@ -1,9 +1,13 @@
-<!-- BEGIN:nextjs-agent-rules -->
-
-## This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->
+<!--
+ * @Author: shaoliye shaoliye@fengmap.com
+ * @Date: 2026-11-20 14:40:16
+ * @LastEditors: shaoliye shaoliye@fengmap.com
+ * @LastEditTime: 2026-11-23 10:08:45
+ * @FilePath: \scene-bridge\AGENTS.md
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
+##### Fengmap JavaScript SDK v3.2.0
+- api文档 ： https://developer.fengmap.com/docs/js/v3.2.0/index.html
+- 最小化修改代码不要写过度得防御性代码
+- 书写防御性代码钱看上游是否被限制住，如果被限制了，那么本层就不用写防御性得代码了，尽量保持代码简单，整洁 ，便于迭代，符合工程化架构
+-
