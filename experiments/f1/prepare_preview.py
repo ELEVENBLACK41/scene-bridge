@@ -3,9 +3,10 @@
 import argparse
 import json
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
-from read_sample import read_building
+from import_assets import read_map_upload, read_theme_upload, write_assets
+from read_sample import read_building, read_building_assets
 
 
 MAP_ID = "2067155016009707521"
@@ -24,7 +25,7 @@ def prepare_map_assets(root):
         archive.extractall(root / "theme", members=indoor_files)
 
 
-def floor_manifest(floor):
+def floor_manifest(floor, origin, is_reference):
     from shapely.geometry import Polygon
 
     features = floor["features"]
@@ -39,7 +40,7 @@ def floor_manifest(floor):
     if with_hole:
         label = "楼板孔洞" if with_hole["kind"] == "extent" else "模型孔洞"
         checkpoints.append((with_hole, label, True))
-    if floor["name"] == "F1":
+    if is_reference and floor["name"] == "F1":
         names = {58: "贵宾室 N1-3", 134: "会议室 N101", 172: "男洗手间"}
         checkpoints += [(feature, names[feature["id"]], False) for feature in models if feature["id"] in names]
     else:
@@ -65,49 +66,77 @@ def floor_manifest(floor):
             "height": 0 if kind == "extent" else feature["sourceHeight"],
         })
 
+    xs, ys = zip(*(point for feature in features for point in feature["outer"]))
     return {
         "id": floor["id"],
         "name": floor["name"],
         "elevation": floor["elevation"],
+        "bounds": [min(xs) - origin[0], origin[1] - max(ys), max(xs) - origin[0], origin[1] - min(ys)],
         "anchors": anchors,
     }
 
 
-def main():
+def write_preview(sample, theme_id, theme, read_image, output):
     from build_glb import build_floors
     from glb_templates import write_template_models
     from palette_templates import make_templates
 
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("output", type=Path, help="Directory for SCENE_BRIDGE_F1_ASSETS")
-    args = parser.parse_args()
-
-    sample = read_building(MAP_ZIP)
     floors = sample["floors"]
+    origin = sample["mapCenter"]
     default_index = next((index for index, floor in enumerate(floors) if floor["name"] == "F1"), 0)
     for index, floor in enumerate(floors):
         floor["elevation"] = (index - default_index) * FLOOR_SPACING
-    with ZipFile(THEME_ZIP) as archive:
-        theme = json.loads(archive.read(f"{THEME_ID}/{THEME_ID}.theme"))
-        templates = make_templates(theme, floors, sample["mapCenter"], lambda name: archive.read(f"{THEME_ID}/{name}"))
+    templates = make_templates(theme, floors, origin, read_image)
     manifest = {
         "mapId": sample["mapId"],
-        "themeId": THEME_ID,
+        "themeId": theme_id,
         "defaultFloorId": floors[default_index]["id"],
         "floorSpacing": FLOOR_SPACING,
-        "origin": sample["mapCenter"],
+        "origin": origin,
         "model": templates[0]["file"],
         "templates": templates,
-        "floors": [floor_manifest(floor) for floor in floors],
+        "floors": [floor_manifest(floor, origin, sample["mapId"] == MAP_ID) for floor in floors],
     }
 
-    scene = build_floors(sample["mapId"], sample["mapCenter"], floors)
-    prepare_map_assets(args.output)
-    write_template_models(scene, templates, args.output)
-    (args.output / "sample.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    scene = build_floors(sample["mapId"], origin, floors)
+    write_template_models(scene, templates, output)
+    (output / "sample.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     for floor in floors:
         print(f"{floor['name']}: {len(floor['features'])} meshes, Y={floor['elevation']} m")
-    print(f"{len(templates)} templates, {len(scene.geometry)} meshes per GLB ({args.output.resolve()})")
+    print(f"{len(templates)} templates, {len(scene.geometry)} meshes per GLB ({output.resolve()})")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path, help="Directory for the prepared preview")
+    parser.add_argument("--map", type=Path, help="Complete .fmap or indoor map ZIP")
+    parser.add_argument("--theme", type=Path, help="FengMap .theme or theme ZIP")
+    parser.add_argument("--theme-name", help="Original uploaded theme filename")
+    args = parser.parse_args()
+    if bool(args.map) != bool(args.theme):
+        parser.error("--map and --theme must be provided together")
+
+    if args.map:
+        try:
+            map_id, map_assets = read_map_upload(args.map)
+            sample = read_building_assets(map_assets.__getitem__, map_id)
+            theme_id, theme, theme_assets = read_theme_upload(args.theme, args.theme_name or args.theme.name)
+        except (BadZipFile, IndexError, KeyError, TypeError, UnicodeError, json.JSONDecodeError):
+            parser.exit(2, "无法读取上传文件。请选择完整的室内地图和 FengMap 主题。\n")
+        except ValueError as error:
+            parser.exit(2, f"{error}\n")
+        write_assets(args.output / "map" / map_id, map_assets)
+        write_assets(args.output / "theme" / theme_id, theme_assets)
+        try:
+            write_preview(sample, theme_id, theme, theme_assets.__getitem__, args.output)
+        except ValueError as error:
+            parser.exit(2, f"生成 GLB 失败：{error}\n")
+    else:
+        prepare_map_assets(args.output)
+        sample = read_building(MAP_ZIP)
+        with ZipFile(THEME_ZIP) as archive:
+            theme = json.loads(archive.read(f"{THEME_ID}/{THEME_ID}.theme"))
+            write_preview(sample, THEME_ID, theme, lambda name: archive.read(f"{THEME_ID}/{name}"), args.output)
 
 
 if __name__ == "__main__":

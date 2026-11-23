@@ -7,7 +7,7 @@ from tempfile import NamedTemporaryFile
 
 import numpy as np
 import trimesh
-from shapely import make_valid
+from shapely import constrained_delaunay_triangles, make_valid
 from shapely.geometry import Polygon
 
 
@@ -24,10 +24,17 @@ def extrude_footprint(polygon, height, transform, name):
 
     # Resolve coincident edges at touching rings before the second triangulation.
     tolerance = 0.0001
-    polygon = polygon.buffer(-tolerance, join_style="mitre").buffer(tolerance, join_style="mitre")
-    if polygon.geom_type != "Polygon" or polygon.area <= 0:
-        raise ValueError(f"{name} footprint could not be repaired")
-    mesh = trimesh.creation.extrude_polygon(polygon, height, engine="earcut", transform=transform)
+    cleaned = polygon.buffer(-tolerance, join_style="mitre").buffer(tolerance, join_style="mitre")
+    if cleaned.geom_type == "Polygon" and cleaned.area > 0:
+        mesh = trimesh.creation.extrude_polygon(cleaned, height, engine="earcut", transform=transform)
+        if mesh.is_watertight:
+            return mesh, True
+
+    # Constrained triangulation keeps the source boundary and holes if Earcut leaves a non-manifold edge.
+    caps = constrained_delaunay_triangles(polygon)
+    coordinates = [xy for triangle in caps.geoms for xy in list(triangle.exterior.coords)[:3]]
+    vertices, indices = np.unique(np.asarray(coordinates), axis=0, return_inverse=True)
+    mesh = trimesh.creation.extrude_triangulation(vertices, indices.reshape(-1, 3), height, transform=transform)
     if not mesh.is_watertight:
         raise ValueError(f"{name} extrusion is not watertight")
     return mesh, True

@@ -4,7 +4,7 @@ import { Html, useGLTF } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { Color, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera, PerspectiveCamera } from "three";
-import { assetRoot, type MapFrame, type PreviewFloor, type PreviewSample, type PreviewTemplate, type ViewCommand } from "../preview-data";
+import type { MapFrame, PreviewFloor, PreviewSample, PreviewTemplate, ViewCommand } from "../preview-data";
 import { EntranceBloom } from "./entrance-bloom";
 import { TemplateLighting } from "./template-lighting";
 import { useViewportGestures } from "./use-viewport-gestures";
@@ -28,13 +28,13 @@ class ModelErrorBoundary extends Component<{ children: ReactNode }, { message: s
   }
 }
 
-function FloorModel({ sample, floor, template, onReady }: {
-  sample: PreviewSample;
+function FloorModel({ modelUrl, floor, template, onReady }: {
+  modelUrl: string;
   floor: PreviewFloor;
   template: PreviewTemplate;
   onReady: (key: string) => void;
 }) {
-  const { scene } = useGLTF(`${assetRoot}/${sample.model}`, false, false);
+  const { scene } = useGLTF(modelUrl, false, false);
   const invalidate = useThree((state) => state.invalidate);
   const materials = useMemo(() => template.materials.map((material) => {
     const color = new Color().fromArray(material.color);
@@ -75,7 +75,7 @@ function FloorModel({ sample, floor, template, onReady }: {
   return <group position-y={-floor.elevation}><primitive object={model} /></group>;
 }
 
-function MirroredCamera({ frame }: { frame: MapFrame | null }) {
+function MirroredCamera({ frame, bounds }: { frame: MapFrame | null; bounds: PreviewFloor["bounds"] }) {
   const camerasRef = useRef<{
     ortho: OrthographicCamera & { manual: true };
     perspective: PerspectiveCamera & { manual: true };
@@ -84,28 +84,47 @@ function MirroredCamera({ frame }: { frame: MapFrame | null }) {
   const { width, height } = useThree((state) => state.size);
 
   useLayoutEffect(() => {
-    if (!frame || !width || !height) return;
+    if (!width || !height || (!frame && !bounds)) return;
     camerasRef.current ??= {
       ortho: Object.assign(new OrthographicCamera(), { manual: true as const }),
       perspective: Object.assign(new PerspectiveCamera(), { manual: true as const }),
     };
-    const camera = frame.perspective ? camerasRef.current.perspective : camerasRef.current.ortho;
-    new Matrix4().fromArray(frame.world).decompose(camera.position, camera.quaternion, camera.scale);
-    camera.updateMatrixWorld(true);
-    const viewportScale = new Matrix4().makeScale(frame.size[0] / width, frame.size[1] / height, 1);
-    camera.projectionMatrix.fromArray(frame.projection).premultiply(viewportScale);
-    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+    const ortho = camerasRef.current.ortho;
+    const camera = frame?.perspective ? camerasRef.current.perspective : ortho;
+    if (frame) {
+      new Matrix4().fromArray(frame.world).decompose(camera.position, camera.quaternion, camera.scale);
+      camera.updateMatrixWorld(true);
+      const viewportScale = new Matrix4().makeScale(frame.size[0] / width, frame.size[1] / height, 1);
+      camera.projectionMatrix.fromArray(frame.projection).premultiply(viewportScale);
+      camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+    } else {
+      const [minX, minZ, maxX, maxZ] = bounds;
+      const scale = Math.max((maxX - minX) / width, (maxZ - minZ) / height) * 1.12;
+      const x = (minX + maxX) / 2;
+      const z = (minZ + maxZ) / 2;
+      ortho.left = -width * scale / 2;
+      ortho.right = width * scale / 2;
+      ortho.bottom = -height * scale / 2;
+      ortho.top = height * scale / 2;
+      ortho.near = 1;
+      ortho.far = 2400;
+      ortho.up.set(0, 0, -1);
+      ortho.position.set(x, 900, z);
+      ortho.lookAt(x, 0, z);
+      ortho.updateProjectionMatrix();
+    }
     const store = get();
     if (store.camera !== camera) store.set({ camera });
     store.invalidate();
-  }, [frame, get, height, width]);
+  }, [bounds, frame, get, height, width]);
   return null;
 }
 
 export function ModelViewport({
-  sample, floor, template, frame, anchorIndex, readyKey, onReady, dispatch,
+  sample, assets, floor, template, frame, anchorIndex, readyKey, onReady, dispatch,
 }: {
   sample: PreviewSample;
+  assets: string;
   floor: PreviewFloor;
   template: PreviewTemplate;
   frame: MapFrame | null;
@@ -134,10 +153,10 @@ export function ModelViewport({
           fallback={<p className={`${viewportStatusClass} z-10`} role="alert">当前浏览器无法启动 WebGL</p>}
         >
           <TemplateLighting template={template} floorId={floor.id} />
-          <MirroredCamera frame={frame} />
+          <MirroredCamera frame={frame} bounds={floor.bounds} />
           {template.entranceBloom && <EntranceBloom />}
           <Suspense fallback={null}>
-            <FloorModel sample={sample} floor={floor} template={template} onReady={onReady} />
+            <FloorModel modelUrl={`${assets}/${sample.model}`} floor={floor} template={template} onReady={onReady} />
             {anchor && (
               <Html position={[anchor.point[0] - sample.origin[0], anchor.height, sample.origin[1] - anchor.point[1]]}
                 pointerEvents="none" zIndexRange={[5, 5]}>

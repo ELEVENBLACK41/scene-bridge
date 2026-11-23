@@ -92,48 +92,54 @@ def read_layer(kind, geometry_records, business_records):
     return features
 
 
-def read_scene(archive, map_id):
-    scene = read_fields(archive.read(f"{map_id}.scene.fmap"))
+def scene_metadata(data):
+    scene = read_fields(data)
     floors = [read_fields(record) for record in scene[18]]
     floor_ids = {floor[2][0].decode("utf-8"): floor[1][0] for floor in floors}
     return [scene[1][0], scene[2][0]], floor_ids
 
 
-def read_floor(archive, map_id, name, floor_id):
+def read_floor(read, map_id, name, floor_id):
     prefix = f"{map_id}.floor.{name}"
     try:
-        geometry = read_fields(archive.read(f"{prefix}.geo.fmap"))
-        business = read_fields(archive.read(f"{prefix}.biz.fmap"))
+        geometry = read_fields(read(f"{prefix}.geo.fmap"))
+        business = read_fields(read(f"{prefix}.biz.fmap"))
     except KeyError as error:
-        raise ValueError(f"{name} is missing a geometry or business shard") from error
+        raise ValueError(f"缺少楼层 {name} 的地图分片：{error.args[0]}") from error
 
     for shard in (geometry, business):
         if shard[1][0].decode("utf-8") != map_id or shard[2][0] != floor_id:
-            raise ValueError(f"{name} shard does not match the sample scene")
+            raise ValueError(f"楼层 {name} 的分片和场景 ID 不一致")
     extents = read_layer("extent", geometry[4], business[3])
     models = read_layer("model", geometry[5], business[4])
     if not extents:
-        raise ValueError(f"{name} has no floor geometry")
+        raise ValueError(f"楼层 {name} 缺少楼面几何")
     return extents + models
 
 
 def read_building(archive_path):
     map_id = archive_path.stem
     with ZipFile(archive_path) as archive:
-        center, floor_ids = read_scene(archive, map_id)
-        floors = [
-            {"name": name, "id": floor_id, "features": read_floor(archive, map_id, name, floor_id)}
-            for name, floor_id in sorted(floor_ids.items(), key=lambda floor: floor[1])
-        ]
+        return read_building_assets(archive.read, map_id)
+
+
+def read_building_assets(read, map_id):
+    center, floor_ids = scene_metadata(read(f"{map_id}.scene.fmap"))
+    if not floor_ids or len(set(floor_ids.values())) != len(floor_ids):
+        raise ValueError("地图场景的楼层清单为空或包含重复的楼层 ID")
+    floors = [
+        {"name": name, "id": floor_id, "features": read_floor(read, map_id, name, floor_id)}
+        for name, floor_id in sorted(floor_ids.items(), key=lambda floor: floor[1])
+    ]
     return {"mapId": map_id, "mapCenter": center, "floors": floors}
 
 
 def read_f1(archive_path):
     map_id = archive_path.stem
     with ZipFile(archive_path) as archive:
-        center, floor_ids = read_scene(archive, map_id)
+        center, floor_ids = scene_metadata(archive.read(f"{map_id}.scene.fmap"))
         floor_id = floor_ids["F1"]
-        features = read_floor(archive, map_id, "F1", floor_id)
+        features = read_floor(archive.read, map_id, "F1", floor_id)
     return {
         "mapId": map_id,
         "floor": "F1",

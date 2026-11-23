@@ -2,15 +2,17 @@
 
 import Script from "next/script";
 import { useRef, useState, type RefObject } from "react";
-import type { MapFrame, PreviewFloor, PreviewSample, ViewCommand } from "../preview-data";
+import type { FengMapCredentials, MapFrame, PreviewFloor, PreviewSample, ViewCommand } from "../preview-data";
 import { useFengMapView, type MapControls } from "./use-fengmap-view";
 import { useViewportGestures } from "./use-viewport-gestures";
 import { pinClass, viewportClass, viewportStatusClass } from "./viewport-classes";
 
 export function FengMapViewport({
-  sample, floor, frame, anchorIndex, controllerRef, onFrame, dispatch,
+  sample, assets, credentials, floor, frame, anchorIndex, controllerRef, onFrame, dispatch,
 }: {
   sample: PreviewSample;
+  assets: string;
+  credentials: FengMapCredentials | null;
   floor: PreviewFloor;
   frame: MapFrame | null;
   anchorIndex: number;
@@ -22,19 +24,20 @@ export function FengMapViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scriptReady, setScriptReady] = useState(false);
   const [error, setError] = useState("");
-  useFengMapView({ sample, scriptReady, containerRef, controllerRef, onFrame, onError: setError });
+  const [initialFloorId] = useState(floor.id);
+  useFengMapView({ sample, assets, credentials, initialFloorId, scriptReady, containerRef, controllerRef, onFrame, onError: setError });
   useViewportGestures(viewportRef, dispatch);
 
-  const problem = sample.credentials ? error : "请配置 FengMap Web 授权";
+  const problem = credentials ? error : "填入 appName 和 key 后加载 FengMap";
   const point = frame?.points[anchorIndex];
   const anchor = floor.anchors[anchorIndex];
 
   return (
     <div
       ref={viewportRef} className={viewportClass} data-viewport="fengmap" data-floor={frame ? floor.name : undefined}
-      data-state={problem ? "error" : frame ? "ready" : "loading"}
+      data-state={!credentials ? "waiting" : problem ? "error" : frame ? "ready" : "loading"}
     >
-      {sample.credentials && (
+      {credentials && (
         <Script
           src="/vendor/fengmap/3.2.0/fengmap.map.min.js"
           onReady={() => {

@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from "react";
-import { assetRoot, type MapFrame, type PreviewSample, type ViewCommand } from "../preview-data";
+import type { FengMapCredentials, MapFrame, PreviewSample, ViewCommand } from "../preview-data";
 import { captureMapFrame } from "./fengmap-camera";
 
 export type MapControls = {
@@ -8,9 +8,12 @@ export type MapControls = {
 };
 
 export function useFengMapView({
-  sample, scriptReady, containerRef, controllerRef, onFrame, onError,
+  sample, assets, credentials, initialFloorId, scriptReady, containerRef, controllerRef, onFrame, onError,
 }: {
   sample: PreviewSample;
+  assets: string;
+  credentials: FengMapCredentials | null;
+  initialFloorId: number;
   scriptReady: boolean;
   containerRef: RefObject<HTMLDivElement | null>;
   controllerRef: RefObject<MapControls | null>;
@@ -20,17 +23,17 @@ export function useFengMapView({
   useEffect(() => {
     const element = containerRef.current;
     const sdk = window.fengmap;
-    if (!element || !sdk || !scriptReady || !sample.credentials) return;
+    if (!element || !sdk || !scriptReady || !credentials) return;
 
     const modes = sdk.FMViewMode;
-    const level = sample.defaultFloorId;
+    const level = initialFloorId;
     const map = new sdk.FMMap({
-      ...sample.credentials,
+      ...credentials,
       container: element,
       mapID: sample.mapId,
       themeID: sample.themeId,
-      mapURL: `${assetRoot}/map/`,
-      themeURL: `${assetRoot}/theme/`,
+      mapURL: `${assets}/map/`,
+      themeURL: `${assets}/theme/`,
       level,
       visibleLevels: [level],
       viewMode: modes.MODE_2D,
@@ -142,5 +145,5 @@ export function useFengMapView({
       cancelAnimationFrame(frame);
       map.dispose();
     };
-  }, [containerRef, controllerRef, onError, onFrame, sample, scriptReady]);
+  }, [assets, containerRef, controllerRef, credentials, initialFloorId, onError, onFrame, sample, scriptReady]);
 }

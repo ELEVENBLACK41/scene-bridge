@@ -1,12 +1,11 @@
 """Write palette GLBs without changing the source geometry buffers."""
 
 import copy
-import json
-import struct
 
 import trimesh
 
 from build_glb import write_glb_bytes
+from glb_codec import pack_glb, unpack_glb
 
 
 def material_json(material):
@@ -75,18 +74,10 @@ def add_point_lights(document, lights):
 
 def write_template_models(scene, templates, output):
     source = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
-    length, kind = struct.unpack_from("<I4s", source, 12)
-    if kind != b"JSON":
-        raise ValueError("Missing GLB JSON chunk")
-    chunk_end = 20 + length
-    original = json.loads(source[20:chunk_end])
-    binary = source[chunk_end:]
+    original, binary = unpack_glb(source)
 
     for template in templates:
         document = copy.deepcopy(original)
         apply_template(document, template)
-        encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        encoded += b" " * (-len(encoded) % 4)
-        header = struct.pack("<4sIII4s", b"glTF", 2, 20 + len(encoded) + len(binary), len(encoded), b"JSON")
-        size = write_glb_bytes(header + encoded + binary, output / template["file"])
+        size = write_glb_bytes(pack_glb(document, binary), output / template["file"])
         print(f"{template['label']}: {size:,} bytes ({template['file']})")

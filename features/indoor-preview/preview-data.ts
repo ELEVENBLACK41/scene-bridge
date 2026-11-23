@@ -1,4 +1,6 @@
 export const assetRoot = "/preview/f1/assets";
+export const buildingExportSpacing = 30;
+export type PreviewExportMode = "building" | "floors";
 
 export type Point = [number, number];
 export type Vector3Tuple = [number, number, number];
@@ -15,6 +17,7 @@ export type PreviewFloor = {
   id: number;
   name: string;
   elevation: number;
+  bounds: [minX: number, minZ: number, maxX: number, maxZ: number];
   anchors: Anchor[];
 };
 
@@ -27,8 +30,11 @@ export type PreviewSample = {
   model: string;
   floors: PreviewFloor[];
   templates: PreviewTemplate[];
-  credentials: { appName: string; key: string } | null;
 };
+
+export type FengMapCredentials = { appName: string; key: string };
+
+export type PreviewRecord = { sample: PreviewSample; assets: string };
 
 export type PreviewTemplate = {
   id: string;

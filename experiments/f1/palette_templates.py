@@ -59,7 +59,7 @@ def reference_rgb(value):
 
 
 def reference_color(style, floor_rgb):
-    alpha = float(style["alpha"])
+    alpha = float(style.get("alpha", 1))
     rgb = reference_rgb(style["color"])
     return "#" + "".join(f"{round(front * alpha + back * (1 - alpha)):02x}" for front, back in zip(rgb, floor_rgb))
 
@@ -83,19 +83,20 @@ def original_model_material(name, color):
 
 
 def original_template(theme, type_ids, read_theme_image):
-    store_styles = {str(row["id"]): row for row in theme["storetheme"]}
+    store_styles = {str(row["id"]): row for row in theme.get("storetheme", [])}
     model_styles = {
         int(value): store_styles[str(rule["normalid"])]
-        for entry in theme["floorapply"] if str(entry["floorid"]) == "0"
+        for entry in theme.get("floorapply", []) if str(entry["floorid"]) == "0"
         for rule in entry["typeapply"] if str(rule["normalid"]) in store_styles
         for value in str(rule["type"]).split(",") if value.strip().isdecimal()
     }
-    floor_rule = next(
+    floor_rule = next((
         rule
-        for entry in theme["floorextentapply"] if str(entry["floorid"]) == "0"
+        for entry in theme.get("floorextentapply", []) if str(entry["floorid"]) == "0"
         for rule in entry["typeapply"] if str(rule["type"]) == "0"
-    )
-    source_floor = next(row for row in theme["extenttheme"] if str(row["id"]) == str(floor_rule["normalid"]))
+    ), {"normalid": "0"})
+    source_floor = next((row for row in theme.get("extenttheme", []) if str(row["id"]) == str(floor_rule["normalid"])),
+                        {"color": "231,231,232"})
     floor_rgb = reference_rgb(source_floor["color"])
     model_colors = {key: reference_color(style, floor_rgb) for key, style in model_styles.items()}
     slab_color = "#f4f4f4"
@@ -116,8 +117,10 @@ def original_template(theme, type_ids, read_theme_image):
 
     fid_indexes = {}
     for rule in theme.get("storeapply", []):
-        style = store_styles[str(rule["normalid"])]
-        if float(style["alpha"]) == 0:
+        style = store_styles.get(str(rule["normalid"]))
+        if not style:
+            continue
+        if float(style.get("alpha", 1)) == 0:
             # The SDK draws these event areas using an image over a transparent base.
             image = style.get("image")
             color = graphic_base_color(read_theme_image(image)) if image else None
@@ -129,7 +132,7 @@ def original_template(theme, type_ids, read_theme_image):
             materials.append(original_model_material(f"FengMap override {style['id']}", color))
     return {
         "id": "original", "label": "原图配色", "file": "building.glb",
-        "background": rgb_hex(theme["viewtheme"]["clearcolor"]), "fill": 1.65,
+        "background": rgb_hex(theme.get("viewtheme", {}).get("clearcolor", "241,242,247")), "fill": 1.65,
         "swatches": [slab_color, model_colors.get(180100, neutral), model_colors.get(200004, neutral)],
         "materials": materials, "indexes": indexes, "fidIndexes": fid_indexes,
     }
