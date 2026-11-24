@@ -11,6 +11,9 @@ from shapely import constrained_delaunay_triangles, make_valid
 from shapely.affinity import scale
 from shapely.geometry import Polygon
 
+from glb_codec import pack_glb, unpack_glb
+from model_identity import apply_model_identity
+
 
 def extrude_footprint(polygon, height, transform, name):
     repaired = not polygon.is_valid
@@ -130,8 +133,9 @@ def add_floor_geometry(scene, floor, origin, materials, replacements, include_de
 
 
 def write_glb(scene, output):
-    glb = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
-    return write_glb_bytes(glb, output)
+    document, binary = unpack_glb(trimesh.exchange.gltf.export_glb(scene, include_normals=True))
+    apply_model_identity(document)
+    return write_glb_bytes(pack_glb(document, binary), output)
 
 
 def write_glb_bytes(glb, output):

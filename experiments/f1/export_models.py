@@ -8,6 +8,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from glb_codec import pack_glb, unpack_glb
+from model_identity import apply_model_identity
 
 
 def floor_roots(document, floors):
@@ -126,6 +127,7 @@ def main():
 
     try:
         document, binary = unpack_glb(args.glb.read_bytes())
+        apply_model_identity(document)
         sample = json.loads(args.manifest.read_text(encoding="utf-8"))
         floors = sample["floors"]
         roots = floor_roots(document, floors)

@@ -9,6 +9,7 @@ import trimesh
 
 from build_glb import write_glb_bytes
 from glb_codec import pack_glb, unpack_glb
+from model_identity import apply_model_identity
 
 
 def material_json(material):
@@ -146,6 +147,7 @@ def add_route_animations(document, binary):
 def write_template_models(scene, templates, output):
     source = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
     original, binary = unpack_glb(source)
+    apply_model_identity(original)
     binary = add_route_animations(original, binary)
 
     for template in templates:
