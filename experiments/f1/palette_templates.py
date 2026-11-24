@@ -182,16 +182,28 @@ def semantic_template(template_id, label, background, fill, colors, type_ids, gl
 def make_templates(theme, floors, origin, read_theme_image):
     type_ids = sorted({f["typeId"] for floor in floors for f in floor["features"] if f["typeId"] is not None})
     positions = lights_by_floor(floors, origin)
-    warm = semantic_template("warm", "暖光夜景", "#e9ddd0", 2.15, {
-        "extent": "#f1e3d2", "structure": "#e7dfd2", "exhibit": "#f0d6b7", "entrance": "#f5c891",
-        "hall": "#f7ede1", "vertical": "#e5d9bf", "room": "#eee4d5", "service": "#e3e5d8",
-        "utility": "#e2dcd2", "parking": "#ded8d2", "other": "#e9e2d6",
+    warm = semantic_template("warm", "暖光夜景", "#d5c9bb", 1.44, {
+        "extent": "#cbbfb1", "structure": "#d8cfc2", "exhibit": "#e0d0bb", "entrance": "#e6b985",
+        "hall": "#d5c8bb", "vertical": "#b3a595", "room": "#ded3c5", "service": "#c6c6b5",
+        "utility": "#c2b6a6", "parking": "#d2c9bc", "other": "#d9cfc1",
     }, type_ids, glows={
         "entrance": (ENTRANCE_GLOW_COLOR, 1.0),
+    }, lights={
+        "color": linear_rgb("#ffe3c6"), "intensity": 76, "range": 24, "positions": positions,
     })
     entrance_material = next(i for i, material in enumerate(warm["materials"]) if material["name"] == "entrance")
     warm["materials"][entrance_material]["emissionStrength"] = ENTRANCE_GLOW_STRENGTH
     warm["entranceBloom"] = True
+    warm["detailEmissionStrengths"] = {
+        "Entrance glow": 3.25, "Portal and handrail lights": 3.1,
+        "Route lamp glow": 3.1, "Display glass": 0.6, "Storefront lights": 1.2,
+    }
+
+    # A few larger shopfronts provide the darker counterpoint in the nighttime palette.
+    accents = [feature["fid"] for floor in floors for feature in floor["features"] if is_storefront_accent(feature)]
+    if accents:
+        warm["fidIndexes"] = {fid: len(warm["materials"]) for fid in accents}
+        warm["materials"].append(make_material("Mocha storefront", "#786557"))
     return [
         original_template(theme, type_ids, read_theme_image),
         semantic_template("category", "分类对比色", "#e6ece8", 1.65, {
@@ -215,3 +227,8 @@ def make_templates(theme, floors, origin, read_theme_image):
             "parking": "#9b93a2", "other": "#bcb09e",
         }, type_ids),
     ]
+
+
+def is_storefront_accent(feature):
+    return bool(feature["fid"] and feature["typeId"] in (100101, 100102, 170100, 190501)
+                and feature["id"] % 11 == 0 and feature["name"])

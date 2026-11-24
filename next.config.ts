@@ -1,7 +1,11 @@
+import { networkInterfaces } from "node:os";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: Object.values(networkInterfaces())
+    .flatMap((addresses) => addresses ?? [])
+    .filter(({ family }) => family === "IPv4")
+    .map(({ address }) => address),
   experimental: {
     agentFeedback: true,
   },

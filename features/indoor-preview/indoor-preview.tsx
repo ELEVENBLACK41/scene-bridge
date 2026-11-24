@@ -1,9 +1,9 @@
 "use client";
 
 import { ArrowUp, Download, Minus, Plus, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { assetRoot, buildingExportSpacing, type FengMapCredentials, type MapFrame, type PreviewExportMode, type PreviewRecord, type PreviewSample, type ViewCommand } from "./preview-data";
+import { buildingExportSpacing, type FengMapCredentials, type MapFrame, type PreviewExportMode, type PreviewRecord, type ViewCommand } from "./preview-data";
 import { PreviewImport } from "./preview-import";
 import { FengMapViewport } from "./viewports/fengmap-viewport";
 import { ModelViewport } from "./viewports/model-viewport";
@@ -162,7 +162,7 @@ function PreviewWorkspace({ record, authorization, importing }: {
           ))}
         </div>
         <p className={mutedClass}>
-          {frame ? "任意一栏拖动旋转，右键或 Shift 拖动平移，滚轮或双指缩放。" : "加载 FengMap 原图后可同步操作两个视口。"}
+          {frame ? "任意一栏拖动旋转，右键或 Shift 拖动平移，滚轮或双指缩放。" : "拖动右栏旋转模型。加载 FengMap 原图后可同步操作两个视口。"}
         </p>
       </div>
       <p className={`mt-2 ${mutedClass}`}>整栋导出使用 {buildingExportSpacing} 米示意层间距，分层文件以各自的楼面为零点。</p>
@@ -174,20 +174,6 @@ export function IndoorPreview() {
   const [record, setRecord] = useState<PreviewRecord>();
   const [authorization, setAuthorization] = useState<Authorization | null>(null);
   const [importing, setImporting] = useState(false);
-
-  useEffect(() => {
-    const request = new AbortController();
-    fetch(`${assetRoot}/sample.json`, { signal: request.signal })
-      .then(async (response) => {
-        if (!response.ok) return;
-        const data: PreviewSample = await response.json();
-        if (data.floors?.length && data.templates?.length) {
-          setRecord((current) => current ?? { sample: data, assets: assetRoot });
-        }
-      })
-      .catch(() => {});
-    return () => request.abort();
-  }, []);
 
   return (
     <main className="flex-1 bg-[#e7efeb] font-sans text-[#193833]" lang="zh-CN">

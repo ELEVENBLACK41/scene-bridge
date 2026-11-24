@@ -1,11 +1,12 @@
 "use client";
 
-import { Html, useGLTF } from "@react-three/drei";
+import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
-import { Color, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera, PerspectiveCamera } from "three";
-import type { MapFrame, PreviewFloor, PreviewSample, PreviewTemplate, ViewCommand } from "../preview-data";
+import { Color, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera, PerspectiveCamera, Vector3 } from "three";
+import type { MapFrame, PreviewFloor, PreviewSample, PreviewTemplate, Vector3Tuple, ViewCommand } from "../preview-data";
 import { EntranceBloom } from "./entrance-bloom";
+import { RouteLightMotion } from "./route-light-motion";
 import { TemplateLighting } from "./template-lighting";
 import { useViewportGestures } from "./use-viewport-gestures";
 import { pinClass, viewportClass, viewportStatusClass } from "./viewport-classes";
@@ -34,7 +35,7 @@ function FloorModel({ modelUrl, floor, template, onReady }: {
   template: PreviewTemplate;
   onReady: (key: string) => void;
 }) {
-  const { scene } = useGLTF(modelUrl, false, false);
+  const { scene, animations } = useGLTF(modelUrl, false, false);
   const invalidate = useThree((state) => state.invalidate);
   const materials = useMemo(() => template.materials.map((material) => {
     const color = new Color().fromArray(material.color);
@@ -54,17 +55,34 @@ function FloorModel({ modelUrl, floor, template, onReady }: {
     for (const material of materials) material.dispose();
   }, [materials]);
 
-  const model = useMemo(() => {
+  const { model, detailMaterials } = useMemo(() => {
     const selected = scene.getObjectByName(floor.name)?.clone();
+    const details = new Map<MeshStandardMaterial, MeshStandardMaterial>();
     selected?.traverse((node) => {
       if (node instanceof Mesh) {
+        if (node.userData.kind === "detail") {
+          const original = node.material;
+          const strength = template.detailEmissionStrengths?.[original.name];
+          if (strength !== undefined && original instanceof MeshStandardMaterial) {
+            if (!details.has(original)) {
+              const variant = original.clone();
+              variant.emissiveIntensity = strength;
+              details.set(original, variant);
+            }
+            node.material = details.get(original);
+          }
+          return;
+        }
         const key = node.userData.kind === "extent" ? "extent" : String(node.userData.sourceTypeId);
         const index = template.fidIndexes?.[node.userData.sourceFid] ?? template.indexes[key] ?? template.indexes.other;
         node.material = materials[index];
       }
     });
-    return selected;
-  }, [floor.name, materials, scene, template.fidIndexes, template.indexes]);
+    return { model: selected, detailMaterials: details };
+  }, [floor.name, materials, scene, template.detailEmissionStrengths, template.fidIndexes, template.indexes]);
+  useEffect(() => () => {
+    for (const material of detailMaterials.values()) material.dispose();
+  }, [detailMaterials]);
   if (!model) throw new Error(`GLB 缺少 ${floor.name} 分组`);
 
   useLayoutEffect(() => {
@@ -72,7 +90,14 @@ function FloorModel({ modelUrl, floor, template, onReady }: {
     onReady(`${floor.id}/${template.id}`);
   }, [floor.id, invalidate, onReady, template.id]);
 
-  return <group position-y={-floor.elevation}><primitive object={model} /></group>;
+  const routeClip = animations.find(({ name }) => name === `Route lights ${floor.name}`);
+
+  return (
+    <group position-y={-floor.elevation}>
+      <primitive object={model} />
+      {routeClip && <RouteLightMotion model={model} clip={routeClip} />}
+    </group>
+  );
 }
 
 function MirroredCamera({ frame, bounds }: { frame: MapFrame | null; bounds: PreviewFloor["bounds"] }) {
@@ -99,18 +124,24 @@ function MirroredCamera({ frame, bounds }: { frame: MapFrame | null; bounds: Pre
       camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
     } else {
       const [minX, minZ, maxX, maxZ] = bounds;
-      const scale = Math.max((maxX - minX) / width, (maxZ - minZ) / height) * 1.12;
       const x = (minX + maxX) / 2;
       const z = (minZ + maxZ) / 2;
+      const longNorthSouth = maxZ - minZ > maxX - minX;
+      ortho.up.set(0, 1, 0);
+      ortho.position.set(x + (longNorthSouth ? 780 : 245), 590, z + (longNorthSouth ? 245 : 780));
+      ortho.lookAt(x, 0, z);
+      const rotation = ortho.quaternion.clone().invert();
+      const corners = [[minX, minZ], [minX, maxZ], [maxX, minZ], [maxX, maxZ]]
+        .map(([px, pz]) => new Vector3(px - x, 0, pz - z).applyQuaternion(rotation));
+      const scale = Math.max(...corners.map((corner) => Math.max(Math.abs(corner.x) * 2 / width,
+        Math.abs(corner.y) * 2 / height))) * 1.12;
       ortho.left = -width * scale / 2;
       ortho.right = width * scale / 2;
       ortho.bottom = -height * scale / 2;
       ortho.top = height * scale / 2;
       ortho.near = 1;
       ortho.far = 2400;
-      ortho.up.set(0, 0, -1);
-      ortho.position.set(x, 900, z);
-      ortho.lookAt(x, 0, z);
+      ortho.zoom = 1;
       ortho.updateProjectionMatrix();
     }
     const store = get();
@@ -134,9 +165,13 @@ export function ModelViewport({
   dispatch: (command: ViewCommand) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  useViewportGestures(viewportRef, dispatch);
+  useViewportGestures(viewportRef, dispatch, !!frame);
   const ready = readyKey === `${floor.id}/${template.id}`;
   const anchor = floor.anchors[anchorIndex];
+  const orbitTarget = useMemo<Vector3Tuple>(() => {
+    const [minX, minZ, maxX, maxZ] = floor.bounds;
+    return [(minX + maxX) / 2, 0, (minZ + maxZ) / 2];
+  }, [floor.bounds]);
 
   return (
     <div
@@ -154,6 +189,8 @@ export function ModelViewport({
         >
           <TemplateLighting template={template} floorId={floor.id} />
           <MirroredCamera frame={frame} bounds={floor.bounds} />
+          {!frame && <OrbitControls target={orbitTarget} enableDamping={false} zoomToCursor minPolarAngle={0.02} maxPolarAngle={1.28}
+            minZoom={0.45} maxZoom={12} />}
           {template.entranceBloom && <EntranceBloom />}
           <Suspense fallback={null}>
             <FloorModel modelUrl={`${assets}/${sample.model}`} floor={floor} template={template} onReady={onReady} />

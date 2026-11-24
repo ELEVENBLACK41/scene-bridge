@@ -51,10 +51,19 @@ def floor_glb(document, binary, root):
     meshes, mesh_map = subset(document["meshes"], (node["mesh"] for node in nodes if "mesh" in node))
     primitives = [primitive for mesh in meshes for primitive in mesh["primitives"]]
     materials, material_map = subset(document["materials"], (p["material"] for p in primitives if "material" in p))
+    color_textures = [material["pbrMetallicRoughness"]["baseColorTexture"] for material in materials
+                      if "baseColorTexture" in material.get("pbrMetallicRoughness", {})]
+    textures, texture_map = subset(document.get("textures", []), (texture["index"] for texture in color_textures))
+    images, image_map = subset(document.get("images", []), (texture["source"] for texture in textures))
     accessor_ids = [index for p in primitives for index in p["attributes"].values()]
     accessor_ids += [p["indices"] for p in primitives if "indices" in p]
+    animations = [copy.deepcopy(animation) for animation in document.get("animations", [])
+                  if all(channel["target"]["node"] in node_map for channel in animation["channels"])]
+    for animation in animations:
+        for sampler in animation["samplers"]:
+            accessor_ids.extend((sampler["input"], sampler["output"]))
     accessors, accessor_map = subset(document["accessors"], accessor_ids)
-    views, view_map = subset(document["bufferViews"], (accessor["bufferView"] for accessor in accessors))
+    views, view_map = subset(document["bufferViews"], (item["bufferView"] for item in [*accessors, *images]))
 
     # Copy only the buffer ranges this floor uses and keep glTF's four-byte alignment.
     packed = bytearray()
@@ -63,8 +72,12 @@ def floor_glb(document, binary, root):
         packed.extend(b"\0" * (-len(packed) % 4))
         view["byteOffset"] = len(packed)
         packed.extend(binary[offset:offset + view["byteLength"]])
-    for accessor in accessors:
-        accessor["bufferView"] = view_map[accessor["bufferView"]]
+    for item in [*accessors, *images]:
+        item["bufferView"] = view_map[item["bufferView"]]
+    for texture in color_textures:
+        texture["index"] = texture_map[texture["index"]]
+    for texture in textures:
+        texture["source"] = image_map[texture["source"]]
     for primitive in primitives:
         primitive["attributes"] = {kind: accessor_map[i] for kind, i in primitive["attributes"].items()}
         if "indices" in primitive:
@@ -76,6 +89,13 @@ def floor_glb(document, binary, root):
             node["children"] = [node_map[child] for child in node["children"]]
         if "mesh" in node:
             node["mesh"] = mesh_map[node["mesh"]]
+    for animation in animations:
+        for channel in animation["channels"]:
+            target = channel["target"]
+            target["node"] = node_map[target["node"]]
+        for sampler in animation["samplers"]:
+            sampler["input"] = accessor_map[sampler["input"]]
+            sampler["output"] = accessor_map[sampler["output"]]
     set_elevation(nodes[0], 0)
 
     result = {
@@ -83,6 +103,15 @@ def floor_glb(document, binary, root):
         "scene": 0, "scenes": [{"nodes": [0]}], "nodes": nodes, "meshes": meshes, "materials": materials,
         "accessors": accessors, "bufferViews": views, "buffers": [{"byteLength": len(packed)}],
     }
+    if textures:
+        result.update(textures=textures, images=images)
+    else:
+        for key in ("textures", "images", "samplers"):
+            result.pop(key, None)
+    if animations:
+        result["animations"] = animations
+    else:
+        result.pop("animations", None)
     return pack_glb(result, packed)
 
 

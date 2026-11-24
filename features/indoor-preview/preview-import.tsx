@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { FengMapCredentials, PreviewRecord } from "./preview-data";
 
 const fieldClass = "border-[#c6d5d0] bg-white text-[#193833] file:text-[#193833] placeholder:text-[#62746d]";
 const formButton = "justify-self-start border-[#9bb7aa] bg-[#e1eee8] text-[#193833] hover:bg-[#d3e6dc]";
+const subscribe = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
 export function PreviewImport({ importing, onImporting, onImported, onAuthorize }: {
   importing: boolean;
@@ -14,6 +17,7 @@ export function PreviewImport({ importing, onImporting, onImported, onAuthorize 
   onImported: (record: PreviewRecord) => void;
   onAuthorize: (credentials: FengMapCredentials) => void;
 }) {
+  const hydrated = useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean }>();
   const [credentialError, setCredentialError] = useState("");
 
@@ -63,7 +67,7 @@ export function PreviewImport({ importing, onImporting, onImported, onAuthorize 
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="submit" variant="outline" size="sm" className={formButton} disabled={importing}>
+          <Button type="submit" variant="outline" size="sm" className={formButton} disabled={!hydrated || importing}>
             {importing ? "正在转换…" : "导入并转换"}
           </Button>
           {importing && <span role="status" className="text-xs text-[#516a64]">正在本机生成整栋 GLB</span>}
@@ -86,7 +90,9 @@ export function PreviewImport({ importing, onImporting, onImported, onAuthorize 
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="submit" variant="outline" size="sm" className={formButton}>加载 FengMap</Button>
+          <Button type="submit" variant="outline" size="sm" className={formButton} disabled={!hydrated}>
+            加载 FengMap
+          </Button>
           {credentialError && <span role="alert" className="text-xs text-[#9e392d]">{credentialError}</span>}
         </div>
       </form>

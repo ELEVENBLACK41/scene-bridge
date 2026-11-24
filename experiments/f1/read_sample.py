@@ -127,10 +127,14 @@ def read_building_assets(read, map_id):
     center, floor_ids = scene_metadata(read(f"{map_id}.scene.fmap"))
     if not floor_ids or len(set(floor_ids.values())) != len(floor_ids):
         raise ValueError("地图场景的楼层清单为空或包含重复的楼层 ID")
-    floors = [
-        {"name": name, "id": floor_id, "features": read_floor(read, map_id, name, floor_id)}
-        for name, floor_id in sorted(floor_ids.items(), key=lambda floor: floor[1])
-    ]
+    floors = []
+    for name, floor_id in sorted(floor_ids.items(), key=lambda floor: floor[1]):
+        features = read_floor(read, map_id, name, floor_id)
+        try:
+            navigation = read(f"{map_id}.floor.{name}.navi.fmap")
+        except KeyError:
+            navigation = None
+        floors.append({"name": name, "id": floor_id, "features": features, "navigation": navigation})
     return {"mapId": map_id, "mapCenter": center, "floors": floors}
 
 

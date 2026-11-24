@@ -4,10 +4,11 @@ import type { ViewCommand } from "../preview-data";
 export function useViewportGestures(
   viewportRef: RefObject<HTMLDivElement | null>,
   dispatch: (command: ViewCommand) => void,
+  enabled = true,
 ) {
   useEffect(() => {
     const viewport = viewportRef.current;
-    if (!viewport) return;
+    if (!viewport || !enabled) return;
     const pointers = new Map<number, PointerEvent>();
 
     function start(event: PointerEvent) {
@@ -59,5 +60,5 @@ export function useViewportGestures(
       viewport.removeEventListener("wheel", wheel);
       viewport.removeEventListener("contextmenu", contextMenu);
     };
-  }, [dispatch, viewportRef]);
+  }, [dispatch, enabled, viewportRef]);
 }

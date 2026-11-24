@@ -98,11 +98,11 @@ def write_preview(sample, theme_id, theme, read_image, output):
         "floors": [floor_manifest(floor, origin, sample["mapId"] == MAP_ID) for floor in floors],
     }
 
-    scene = build_floors(sample["mapId"], origin, floors)
+    scene = build_floors(sample["mapId"], origin, floors, include_details=True)
     write_template_models(scene, templates, output)
     (output / "sample.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     for floor in floors:
-        print(f"{floor['name']}: {len(floor['features'])} meshes, Y={floor['elevation']} m")
+        print(f"{floor['name']}: {len(floor['features'])} source features, Y={floor['elevation']} m")
     print(f"{len(templates)} templates, {len(scene.geometry)} meshes per GLB ({output.resolve()})")
 
 

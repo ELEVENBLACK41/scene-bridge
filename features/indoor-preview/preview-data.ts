@@ -59,6 +59,7 @@ export type PreviewTemplate = {
     range: number;
     positions: Record<number, Vector3Tuple[]>;
   };
+  detailEmissionStrengths?: Record<string, number>;
   entranceBloom?: boolean;
 };
 

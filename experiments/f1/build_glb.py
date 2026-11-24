@@ -8,6 +8,7 @@ from tempfile import NamedTemporaryFile
 import numpy as np
 import trimesh
 from shapely import constrained_delaunay_triangles, make_valid
+from shapely.affinity import scale
 from shapely.geometry import Polygon
 
 
@@ -48,7 +49,9 @@ def build_scene(sample):
     return build_floors(sample["mapId"], sample["mapCenter"], [floor])
 
 
-def build_floors(map_id, map_center, floors):
+def build_floors(map_id, map_center, floors, include_details=False):
+    from floor_details import prepare_floor_details
+
     origin = np.asarray(map_center, dtype=np.float64)
     scene = trimesh.Scene()
     materials = {
@@ -63,26 +66,36 @@ def build_floors(map_id, map_center, floors):
     }
     datum = "floor-relative" if len(floors) == 1 else "illustrative"
     for floor in floors:
+        details, replacements, shop_footprints = prepare_floor_details(floor, origin) if include_details else (None, set(), {})
         scene.graph.update(
             frame_to=floor["name"],
             translation=[0, floor["elevation"], 0],
             metadata={
                 "mapId": map_id, "floorId": floor["id"], "mapOriginXY": origin.tolist(),
                 "verticalDatum": datum,
+                **({"replacedSourceIds": sorted(replacements)} if replacements else {}),
             },
         )
-        add_floor_geometry(scene, floor, origin, materials)
+        add_floor_geometry(scene, floor, origin, materials, replacements, include_details, shop_footprints)
+        if details:
+            details.write(scene, floor["name"])
     return scene
 
 
-def add_floor_geometry(scene, floor, origin, materials):
+def add_floor_geometry(scene, floor, origin, materials, replacements, include_details, shop_footprints):
     for feature in floor["features"]:
         kind = feature["kind"]
+        if kind == "model" and feature["id"] in replacements:
+            continue
         name = f"{floor['name']}_{kind}_{feature['id']}"
-        polygon = Polygon(
-            np.asarray(feature["outer"]) - origin,
-            [np.asarray(ring) - origin for ring in feature["holes"]],
-        )
+        shop = shop_footprints.get(feature["id"]) if kind == "model" else None
+        if shop is not None:
+            polygon = scale(shop, yfact=-1, origin=(0, 0))
+        else:
+            polygon = Polygon(
+                np.asarray(feature["outer"]) - origin,
+                [np.asarray(ring) - origin for ring in feature["holes"]],
+            )
         top = feature["sourceHeight"]
         base = feature["sourceBaseHeight"]
         if kind == "extent":
@@ -97,6 +110,9 @@ def add_floor_geometry(scene, floor, origin, materials):
             [0, 0, 0, 1],
         ])
         mesh, repaired = extrude_footprint(polygon, top - base, transform, name)
+        if include_details:
+            # Keep the roof planes and wall corners crisp while smoothing curved storefronts.
+            mesh = trimesh.graph.smooth_shade(mesh, angle=np.radians(32), facet_minarea=None)
         mesh.visual = trimesh.visual.TextureVisuals(material=materials[kind])
         scene.add_geometry(
             mesh, node_name=name, geom_name=name, parent_node_name=floor["name"],
